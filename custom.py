@@ -1,126 +1,111 @@
 import os
 import sys
-import json
+import random
+import math
 import numpy as np
-import skimage.draw
-import cv2
-import imgaug
-
-# Root directory of the project
-ROOT_DIR = "C:/Users/parvd/OneDrive/Desktop/Project/Project"
-
-# Import Mask RCNN (assuming Mask R-CNN is in the ROOT_DIR)
-sys.path.append(ROOT_DIR)  
-
+import skimage.io
+from imgaug import augmenters as iaa
+import json
+from tensorflow.keras.layers import Layer
 from mrcnn.config import Config
-from mrcnn import model as modellib, utils
+from mrcnn import model as modellib,utils
+from mrcnn.model import log
+
+# Set the ROOT_DIR to the root directory of the Mask R-CNN repository
+ROOT_DIR = "C:/Users/parvd/OneDrive/Desktop/Instance Segmentation"
+
+# Import Mask RCNN
+sys.path.append(ROOT_DIR)
 
 # Path to trained weights file
-COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
+COCO_MODEL_PATH = "C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/mask_rcnn_coco.h5"
 
-# Directory to save logs and model checkpoints, if not provided
-# through the command line argument --logs
-DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
+# Directory to save logs and model checkpoints
+MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
-class CustomConfig(Config):
-    NAME = "object"
-    GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
-    NUM_CLASSES = 1 + 4  # Background + Apple_Black_rot, Apple_healthy, Apple_Rust, Apple_Scrab
-    STEPS_PER_EPOCH = 5
+# Path to the training and validation datasets (COCO format)
+TRAIN_ANNOTATIONS_PATH = "C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/Data Set/Train/Apple.json"
+VAL_ANNOTATIONS_PATH = "C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/Data Set/Val/Val_json.json"
+
+class PlantDiseaseConfig(Config):
+    NAME = "plant_disease"
+    IMAGES_PER_GPU = 2
+    NUM_CLASSES = 1 + 1  # Background + class for plant disease
+    STEPS_PER_EPOCH = 100
     DETECTION_MIN_CONFIDENCE = 0.9
-    LEARNING_RATE = 0.001
 
-class CustomDataset(utils.Dataset):
-    def load_custom(self, dataset_dir, subset):
-        # Add classes
-        self.add_class("object", 1, "Apple_Black_Rot")
-        self.add_class("object", 2, "Apple_Healthy")
-        self.add_class("object", 3, "Apple_Rust")
-        self.add_class("object", 4, "Apple_Scab")
+config = PlantDiseaseConfig()
+config.display()
 
-        assert subset in ["train", "val"]
-        dataset_dir = os.path.join(dataset_dir, subset)
+class PlantDiseaseDataset(utils.Dataset):
+    def load_plantdisease(self, dataset_dir, subset):
+        """Load a subset of the plant disease dataset.
+        dataset_dir: Root directory of the dataset
+        subset: Subset to load (train or val)
+        """
+        # Add classes (only one class for plant disease detection)
+        self.add_class("plant_disease", 1, "disease")
 
         # Load annotations
-        annotations1 = json.load(open(os.path.join(dataset_dir, "Apple.json")))
-        annotations = list(annotations1.values())
+        annotations = json.load(open(os.path.join(dataset_dir, f"{subset}.json")))
+        annotations = annotations['_via_img_metadata']
 
-        annotations = [a for a in annotations if a['regions']]
-
-        for a in annotations:
-            polygons = [r['shape_attributes'] for r in a['regions']]
-            objects = [s['region_attributes']['names'] for s in a['regions']]
-            name_dict = {"Apple_Black_Rot": 1, "Apple_Healthy": 2, "Apple_Rust": 3, "Apple_Scab": 4}
-            num_ids = [name_dict[a] for a in objects]
-
-            image_path = os.path.join(dataset_dir, a['filename'])
-            image = skimage.io.imread(image_path)
-            height, width = image.shape[:2]
-
-            self.add_image(
-                "object",
-                image_id=a['filename'],
-                path=image_path,
-                width=width, height=height,
-                polygons=polygons,
-                num_ids=num_ids
-            )
+        # Add images and their annotations to the dataset
+        for image_id, image_info in annotations.items():
+            if 'regions' in image_info:
+                polygons = [r['shape_attributes'] for r in image_info['regions']]
+                image_path = os.path.join(dataset_dir, image_info['filename'])
+                self.add_image(
+                    "plant_disease",
+                    image_id=image_id,
+                    path=image_path,
+                    width=image_info['width'],
+                    height=image_info['height'],
+                    polygons=polygons
+                )
 
     def load_mask(self, image_id):
+        """Generate instance masks for an image."""
         image_info = self.image_info[image_id]
-        num_ids = image_info['num_ids']
-        mask = np.zeros([image_info["height"], image_info["width"], len(image_info["polygons"])], dtype=np.uint8)
-        for i, p in enumerate(image_info["polygons"]):
+        if image_info["source"] != "plant_disease":
+            return super(PlantDiseaseDataset, self).load_mask(image_id)
+
+        # Convert polygons to a bitmap mask of shape [height, width, instances]
+        info = self.image_info[image_id]
+        mask = np.zeros([info["height"], info["width"], len(info["polygons"])], dtype=np.uint8)
+        for i, p in enumerate(info["polygons"]):
+            # Get indexes of pixels inside the polygon and set them to 1
             rr, cc = skimage.draw.polygon(p['all_points_y'], p['all_points_x'])
             mask[rr, cc, i] = 1
 
-        num_ids = np.array(num_ids, dtype=np.int32)
-        return mask, num_ids
+        # Return mask, and array of class IDs of each instance.
+        return mask.astype(np.bool), np.ones([mask.shape[-1]], dtype=np.int32)
 
-    def image_reference(self, image_id):
-        info = self.image_info[image_id]
-        if info["source"] == "object":
-            return info["path"]
-        else:
-            super(self.__class__, self).image_reference(image_id)
+# Create training and validation dataset
+dataset_train = PlantDiseaseDataset()
+dataset_train.load_plantdisease("C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/Data Set", "Train")
+dataset_train.prepare()
 
-def train(model):
-    dataset_train = CustomDataset()
-    dataset_train.load_custom("C:/Users/parvd/OneDrive/Desktop/Project/Project/Data Set/Train", "train")
-    dataset_train.prepare()
+dataset_val = PlantDiseaseDataset()
+dataset_val.load_plantdisease("C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/Data Set", "Val")
+dataset_val.prepare()
 
-    dataset_val = CustomDataset()
-    dataset_val.load_custom("C:/Users/parvd/OneDrive/Desktop/Project/Project/Data Set/Val", "val")
-    dataset_val.prepare()
+# Load and create model
+model = modellib.MaskRCNN(mode="training", config=config, model_dir=MODEL_DIR)
+model.load_weights(COCO_MODEL_PATH, by_name=True, exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
 
-    model.train(dataset_train, dataset_val,
-                learning_rate=config.LEARNING_RATE,
-                epochs=300,
-                layers='heads',
-                augmentation=imgaug.augmenters.Sequential([
-                    imgaug.augmenters.Fliplr(1),
-                    imgaug.augmenters.Flipud(1),
-                    imgaug.augmenters.Affine(rotate=(-45, 45)),
-                    imgaug.augmenters.Affine(rotate=(-90, 90)),
-                    imgaug.augmenters.Affine(scale=(0.5, 1.5)),
-                    imgaug.augmenters.Crop(px=(0, 10)),
-                    imgaug.augmenters.Grayscale(alpha=(0.0, 1.0)),
-                    imgaug.augmenters.AddToHueAndSaturation((-20, 20)),
-                    imgaug.augmenters.Add((-10, 10), per_channel=0.5),
-                    imgaug.augmenters.Invert(0.05, per_channel=True),
-                    imgaug.augmenters.Sharpen(alpha=(0, 1.0), lightness=(0.75, 1.5)),
-                ]))
+# Data augmentation
+augmentation = iaa.Sequential([
+    iaa.Fliplr(0.5),
+    iaa.Affine(rotate=(-45, 45)),
+])
 
-config = CustomConfig()
-model = modellib.MaskRCNN(mode="training", config=config, model_dir=DEFAULT_LOGS_DIR)
+# Train the model
+model.train(dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE,
+            epochs=30,
+            layers='heads',
+            augmentation=augmentation)
 
-weights_path = COCO_WEIGHTS_PATH
-if not os.path.exists(weights_path):
-    utils.download_trained_weights(weights_path)
-
-model.load_weights(weights_path, by_name=True, exclude=[
-    "mrcnn_class_logits", "mrcnn_bbox_fc",
-    "mrcnn_bbox", "mrcnn_mask"])
-
-train(model)
+# Save weights (optional)
+model.keras_model.save_weights("C:/Users/parvd/OneDrive/Desktop/Instance Segmentation/plant_disease_weights.h5")
