@@ -20,7 +20,7 @@ The project is based on the spatial embedding and clustering methodology propose
 ├── report\_config.py      # Clustering and reporting configuration
 └── README.md             # Project documentation
 
-````
+
 
 ---
 
