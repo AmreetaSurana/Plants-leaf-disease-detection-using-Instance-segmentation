@@ -9,7 +9,7 @@ The project is based on the spatial embedding and clustering methodology propose
 
 ## 📂 Project Structure
 
-
+```
 ├── dataset-mini/         # Sample dataset (for quick evaluation)
 ├── logs/                 # Training logs and visualizations
 ├── src/                  # Source code for training and reporting
@@ -19,7 +19,7 @@ The project is based on the spatial embedding and clustering methodology propose
 ├── train\_config.py       # Training configuration
 ├── report\_config.py      # Clustering and reporting configuration
 └── README.md             # Project documentation
-
+```
 
 
 ---
