@@ -1,4 +1,4 @@
-```markdown
+
 # 🌿 Plants Leaf Disease Detection using Instance Segmentation
 
 This project implements an **Instance Segmentation model** to detect individual plant leaves and accurately identify diseased areas in real-world conditions using **deep learning and clustering-based post-processing.**
@@ -9,7 +9,6 @@ The project is based on the spatial embedding and clustering methodology propose
 
 ## 📂 Project Structure
 
-```
 
 ├── dataset-mini/         # Sample dataset (for quick evaluation)
 ├── logs/                 # Training logs and visualizations
